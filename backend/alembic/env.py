@@ -1,0 +1,65 @@
+import asyncio
+from logging.config import fileConfig
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import create_async_engine
+from alembic import context
+
+# 1. Импортируем наши настройки и Base
+from app.core.config import settings
+from app.db.database import Base
+
+# 2. ВАЖНО: Импортируем все модели, чтобы Alembic их "увидел" и создал миграции
+from app.db.models.test import Test  
+
+config = context.config
+
+# 3. ПРИНУДИТЕЛЬНО задаем URL из наших настроек (перебиваем alembic.ini)
+config.set_main_option("sqlalchemy.url", settings.ASYNC_DATABASE_URL)
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+
+
+def run_migrations_offline() -> None:
+    """Запуск миграций в 'offline' режиме (без подключения к БД, генерация SQL)."""
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    """Запуск миграций в 'online' режиме с асинхронным движком."""
+    # Создаем движок напрямую, используя asyncpg. poolclass=NullPool важен для Alembic
+    engine = create_async_engine(settings.ASYNC_DATABASE_URL, poolclass=pool.NullPool)
+    
+    async with engine.begin() as conn:
+        await conn.run_sync(do_run_migrations)
+    
+    await engine.dispose()
+
+
+def do_run_migrations(connection: Connection) -> None:
+    """Синхронная обертка для выполнения миграций."""
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Точка входа для онлайн-миграций."""
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
